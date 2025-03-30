@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Run current TS file with tsx",
+        "type": "node",
+        "request": "launch",
+        "program": "${file}",
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/tsx",
+        "skipFiles": ["<node_internals>/**"],
+        "console": "integratedTerminal"
+      }
+    ]
+  }
