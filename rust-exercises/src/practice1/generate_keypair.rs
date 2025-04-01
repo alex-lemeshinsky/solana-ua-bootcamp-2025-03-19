@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use solana_sdk::signature::{Keypair, Signer};
 
 pub fn generate_keypair() -> Keypair {

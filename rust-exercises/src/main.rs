@@ -1,5 +1,5 @@
-mod generate_keypair;
+mod practice1;
 
 fn main() {
-    generate_keypair::generate_keypair();
+    practice1::load_keypair::load_keypair();
 }
