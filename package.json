@@ -19,6 +19,7 @@
   "homepage": "https://github.com/alex-lemeshinsky/solana-ua-bootcamp-2025-03-19#readme",
   "dependencies": {
     "@solana-developers/helpers": "^2.8.1",
+    "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.0",
     "esrun": "^3.2.26"
   },
