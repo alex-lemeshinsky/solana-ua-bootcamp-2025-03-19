@@ -10,7 +10,6 @@ use spl_token::{instruction as token_instruction, state::Mint};
 
 pub fn create_token_mint() {
     let sender = load_keypair();
-    println!("Public key: {}", sender.pubkey());
 
     let url = "https://api.devnet.solana.com";
     let client = RpcClient::new(url.to_string());
