@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(deprecated)]
 
 use crate::practice1::load_keypair::load_keypair;
 use solana_client::rpc_client::RpcClient;
