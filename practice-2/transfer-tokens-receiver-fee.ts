@@ -1,16 +1,5 @@
-import {
-  clusterApiUrl,
-  Connection,
-  Keypair,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-} from "@solana/web3.js";
-import {
-  createMint,
-  getOrCreateAssociatedTokenAccount,
-  mintTo,
-  transfer,
-} from "@solana/spl-token";
+import { clusterApiUrl, Connection, PublicKey } from "@solana/web3.js";
+import { getOrCreateAssociatedTokenAccount, transfer } from "@solana/spl-token";
 import { loadKey } from "../utils/load-key";
 
 (async () => {
