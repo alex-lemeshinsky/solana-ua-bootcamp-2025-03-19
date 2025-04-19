@@ -358,4 +358,57 @@ describe("escrow", () => {
     expect(await getTokenBalance(bobUsdcAccount)).toEqual(new BN(30_000_000));
     expect(await getTokenBalance(bobWifAccount)).toEqual(new BN(200_000_000));
   });
+
+  test("Offer cancelled by Alice, tokens are refunded", async () => {
+    const getTokenBalance = getTokenBalanceOn(connection);
+
+    // Create a new offer for cancellation
+    const cancelOfferId = getRandomBigNumber();
+    const offeredUsdc = new BN(5_000_000);
+    const wantedWif = new BN(50_000_000);
+
+    const { offerAddress, vaultAddress } = await makeOfferTx(
+      alice,
+      cancelOfferId,
+      usdcMint.publicKey,
+      offeredUsdc,
+      wifMint.publicKey,
+      wantedWif
+    );
+
+    // Sanity check before cancellation
+    expect(await getTokenBalance(aliceUsdcAccount)).toEqual(new BN(85_000_000));
+    expect(await getTokenBalance(vaultAddress)).toEqual(offeredUsdc);
+
+    // Derive PDA bump again for closing
+    const [foundOfferAddress, _offerBump] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("offer"),
+        alice.publicKey.toBuffer(),
+        cancelOfferId.toArrayLike(Buffer, "le", 8),
+      ],
+      program.programId
+    );
+
+    expect(foundOfferAddress).toEqual(offerAddress);
+
+    const txSig = await program.methods
+      .cancelOffer()
+      .accounts({
+        // @ts-expect-error: maker is definitely a valid account
+        maker: alice.publicKey,
+        offer: offerAddress,
+        tokenProgram: TOKEN_PROGRAM,
+      })
+      .signers([alice])
+      .rpc();
+
+    await confirmTransaction(connection, txSig);
+
+    // Vault should now be empty and closed; Alice refunded
+    expect(await getTokenBalance(aliceUsdcAccount)).toEqual(new BN(90_000_000));
+
+    // The offer account should be closed (fetch should fail)
+    await expect(program.account.offer.fetch(offerAddress)).rejects.toThrow();
+  });
 });
