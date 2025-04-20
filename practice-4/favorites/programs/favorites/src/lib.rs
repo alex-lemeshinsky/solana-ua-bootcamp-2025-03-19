@@ -1,13 +1,15 @@
 use anchor_lang::prelude::*;
 
-// Our program's address! You don't need to change it.
-// This matches the private key in the target/deploy directory
+#[error_code]
+pub enum FavoritesError {
+    #[msg("Unauthorized.")]
+    Unauthorized,
+}
+
 declare_id!("23LDH1n8jGNowMB2atJ2PM9sdXcZA1GvJuNbUqFQpUzE");
 
-// Anchor programs always use
 pub const ANCHOR_DISCRIMINATOR_SIZE: usize = 8;
 
-// What we will put inside the Favorites PDA
 #[account]
 #[derive(InitSpace)]
 pub struct Favorites {
@@ -15,10 +17,10 @@ pub struct Favorites {
 
     #[max_len(50)]
     pub color: String,
+
+    pub authority: Option<Pubkey>,
 }
 
-// When people call the set_favorites instruction, they will need to provide the accounts that will
-// be modified. This keeps Solana fast!
 #[derive(Accounts)]
 pub struct SetFavorites<'info> {
     #[account(mut)]
@@ -41,6 +43,22 @@ pub struct UpdateFavorites<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
+    /// CHECK: original owner of the favorites account
+    pub owner: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"favorites", owner.key().as_ref()],
+        bump,
+    )]
+    pub favorites: Account<'info, Favorites>,
+}
+
+#[derive(Accounts)]
+pub struct SetAuthority<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
     #[account(
         mut,
         seeds = [b"favorites", user.key().as_ref()],
@@ -49,12 +67,10 @@ pub struct UpdateFavorites<'info> {
     pub favorites: Account<'info, Favorites>,
 }
 
-// Our Solana program!
 #[program]
 pub mod favorites {
     use super::*;
 
-    // Our instruction handler! It sets the user's favorite number and color
     pub fn set_favorites(
         context: Context<SetFavorites>,
         number: Option<u64>,
@@ -70,32 +86,43 @@ pub mod favorites {
             color
         );
 
-        context
-            .accounts
-            .favorites
-            .set_inner(Favorites { number, color });
+        context.accounts.favorites.set_inner(Favorites {
+            number,
+            color,
+            authority: None,
+        });
         Ok(())
     }
 
     pub fn update_favorites(
-        context: Context<UpdateFavorites>,
+        ctx: Context<UpdateFavorites>,
         number: Option<u64>,
         color: String,
     ) -> Result<()> {
-        let user_public_key = context.accounts.user.key();
-        msg!("Greetings from {}", context.program_id);
-
+        let signer_key = ctx.accounts.user.key();
+        let owner_key = ctx.accounts.owner.key();
+        let favorites = &mut ctx.accounts.favorites;
+        require!(
+            signer_key == owner_key || Some(signer_key) == favorites.authority,
+            FavoritesError::Unauthorized
+        );
+        msg!("Greetings from {}", ctx.program_id);
         msg!(
             "User {}'s favorite number is {} and favorite color is: {}",
-            user_public_key,
+            signer_key,
             number.map_or("null".to_string(), |n| n.to_string()),
             color
         );
+        favorites.number = number;
+        favorites.color = color;
+        Ok(())
+    }
 
-        context
-            .accounts
-            .favorites
-            .set_inner(Favorites { number, color });
+    pub fn set_authority(ctx: Context<SetAuthority>, authority: Option<Pubkey>) -> Result<()> {
+        let user_key = ctx.accounts.user.key();
+        msg!("Greetings from {}", ctx.program_id);
+        msg!("Setting authority for {} to {:?}", user_key, authority);
+        ctx.accounts.favorites.authority = authority;
         Ok(())
     }
 }
