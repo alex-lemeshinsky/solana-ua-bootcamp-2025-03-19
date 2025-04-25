@@ -18,6 +18,7 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   createInitializeMint2Instruction,
   createMintToInstruction,
+  createTransferCheckedInstruction,
   getAssociatedTokenAddressSync,
   getMinimumBalanceForRentExemptMint,
 } from "@solana/spl-token";
@@ -145,11 +146,8 @@ describe("escrow", () => {
     )
   );
 
-  // Pick a random ID for the new offer.
   const offerId = getRandomBigNumber();
 
-  // Creates Alice and Bob accounts, 2 token mints, and associated token
-  // accounts for both tokens for both users.
   beforeAll(async () => {
     // global.console = require('console');
 
@@ -215,38 +213,20 @@ describe("escrow", () => {
     offeredAmount: BN,
     wantedTokenMint: PublicKey,
     wantedAmount: BN
-  ): Promise<{
-    offerAddress: PublicKey;
-    vaultAddress: PublicKey;
-  }> => {
+    // returns the offer address
+  ): Promise<PublicKey> => {
     const transactionSignature = await program.methods
       .makeOffer(offerId, offeredAmount, wantedAmount)
       .accounts({
         maker: maker.publicKey,
         tokenMintA: offeredTokenMint,
         tokenMintB: wantedTokenMint,
-        // As the `token_program` account is specified as
-        //
-        //   pub token_program: Interface<'info, TokenInterface>,
-        //
-        // the client library needs us to provide the specific program address
-        // explicitly.
-        //
-        // This is unlike the `associated_token_program` or the `system_program`
-        // account addresses, that are specified in the program IDL, as they are
-        // expected to reference the same programs for all the `makeOffer`
-        // invocations.
         tokenProgram: TOKEN_PROGRAM,
       })
       .signers([maker])
       .rpc();
 
     await confirmTransaction(connection, transactionSignature);
-
-    // Both `offer` address and the `vault` address accounts are computed based
-    // on the other provided account addresses, and so we do not need to provide
-    // them explicitly in the `makeOffer()` account call above.  But we compute
-    // them here and return for convenience.
 
     const [offerAddress, _offerBump] = PublicKey.findProgramAddressSync(
       [
@@ -257,41 +237,18 @@ describe("escrow", () => {
       program.programId
     );
 
-    const vaultAddress = getAssociatedTokenAddressSync(
-      offeredTokenMint,
-      offerAddress,
-      true,
-      TOKEN_PROGRAM
-    );
-
-    return { offerAddress, vaultAddress };
+    return offerAddress;
   };
 
   const takeOfferTx = async (
     offerAddress: PublicKey,
     taker: Keypair
   ): Promise<void> => {
-    // `accounts` argument debugging tool.  Should be part of Anchor really.
-    //
-    // type FlatType<T> = T extends object
-    //   ? { [K in keyof T]: FlatType<T[K]> }
-    //   : T;
-    //
-    // type AccountsArgs = FlatType<
-    //   Parameters<
-    //     ReturnType<
-    //       Program<Escrow>["methods"]["takeOffer"]
-    //     >["accounts"]
-    //   >
-    // >;
-
     const transactionSignature = await program.methods
       .takeOffer()
       .accounts({
         taker: taker.publicKey,
         offer: offerAddress,
-        // See note in the `makeOfferTx` on why this program address is provided
-        // and the rest are not.
         tokenProgram: TOKEN_PROGRAM,
       })
       .signers([taker])
@@ -300,13 +257,13 @@ describe("escrow", () => {
     await confirmTransaction(connection, transactionSignature);
   };
 
-  test("Offer created by Alice, vault holds the offer tokens", async () => {
+  test("Offer created by Alice", async () => {
     const offeredUsdc = new BN(10_000_000);
     const wantedWif = new BN(100_000_000);
 
     const getTokenBalance = getTokenBalanceOn(connection);
 
-    const { offerAddress, vaultAddress } = await makeOfferTx(
+    const offerAddress = await makeOfferTx(
       alice,
       offerId,
       usdcMint.publicKey,
@@ -315,24 +272,21 @@ describe("escrow", () => {
       wantedWif
     );
 
-    expect(await getTokenBalance(aliceUsdcAccount)).toEqual(new BN(90_000_000));
-    expect(await getTokenBalance(vaultAddress)).toEqual(offeredUsdc);
+    expect(await getTokenBalance(aliceUsdcAccount)).toEqual(
+      new BN(100_000_000)
+    );
 
     // Check our Offer account contains the correct data
     const offerAccount = await program.account.offer.fetch(offerAddress);
     expect(offerAccount.maker).toEqual(alice.publicKey);
     expect(offerAccount.tokenMintA).toEqual(usdcMint.publicKey);
     expect(offerAccount.tokenMintB).toEqual(wifMint.publicKey);
+    expect(offerAccount.tokenAOfferedAmount).toEqual(offeredUsdc);
     expect(offerAccount.tokenBWantedAmount).toEqual(wantedWif);
   });
 
   test("Offer taken by Bob, tokens balances are updated", async () => {
     const getTokenBalance = getTokenBalanceOn(connection);
-
-    // This test reuses offer created by the previous test.  Bad design :(
-    // But it is a shortcut that allows us to avoid writing the cleanup code.
-    // TODO Add proper cleanup, that mirrors `beforeEach`, and create a new
-    // offer here.
 
     const [offerAddress, _offerBump] = PublicKey.findProgramAddressSync(
       [
@@ -345,7 +299,9 @@ describe("escrow", () => {
 
     // Verify state before the offer is taken.
 
-    expect(await getTokenBalance(aliceUsdcAccount)).toEqual(new BN(90_000_000));
+    expect(await getTokenBalance(aliceUsdcAccount)).toEqual(
+      new BN(100_000_000)
+    );
     expect(await getTokenBalance(aliceWifAccount)).toEqual(new BN(5_000_000));
     expect(await getTokenBalance(bobUsdcAccount)).toEqual(new BN(20_000_000));
     expect(await getTokenBalance(bobWifAccount)).toEqual(new BN(300_000_000));
@@ -357,5 +313,45 @@ describe("escrow", () => {
 
     expect(await getTokenBalance(bobUsdcAccount)).toEqual(new BN(30_000_000));
     expect(await getTokenBalance(bobWifAccount)).toEqual(new BN(200_000_000));
+  });
+
+  test("Program throws InsufficientTokenBalance error", async () => {
+    const offeredUsdc = new BN(10_000_000);
+    const wantedWif = new BN(100_000_000);
+    const newOfferId = getRandomBigNumber();
+
+    const getTokenBalance = getTokenBalanceOn(connection);
+
+    // Create a new offer
+    const offerAddress = await makeOfferTx(
+      alice,
+      newOfferId,
+      usdcMint.publicKey,
+      offeredUsdc,
+      wifMint.publicKey,
+      wantedWif
+    );
+
+    const aliceUsdcBalance = await getTokenBalance(aliceUsdcAccount);
+    const withdrawAmount = aliceUsdcBalance.sub(new BN(1_000_000));
+    const transferIx = createTransferCheckedInstruction(
+      aliceUsdcAccount,
+      usdcMint.publicKey,
+      bobUsdcAccount,
+      alice.publicKey,
+      withdrawAmount.toNumber(),
+      6,
+      [],
+      TOKEN_PROGRAM
+    );
+    const withdrawTx = new Transaction().add(transferIx);
+    await provider.sendAndConfirm(withdrawTx, [alice]);
+
+    const newBalance = await getTokenBalance(aliceUsdcAccount);
+    expect(newBalance).toEqual(new BN(1_000_000));
+
+    await expect(takeOfferTx(offerAddress, bob)).rejects.toThrow(
+      "InsufficientTokenBalance"
+    );
   });
 });
