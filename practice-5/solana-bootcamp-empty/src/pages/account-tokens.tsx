@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useEffect, useState } from "react";
 import { clusterApiUrl, Connection } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
 import { TokenEntity } from "@/types/token";
 
@@ -43,23 +43,33 @@ export default function AccountTokens({
         const connection = new Connection(
           clusterApiUrl(WalletAdapterNetwork.Devnet)
         );
-        // Fetch all token accounts owned by the user
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-          publicKey,
-          { programId: TOKEN_PROGRAM_ID }
-        );
 
-        // Filter out accounts with zero balance
-        const userTokens: TokenEntity[] = tokenAccounts.value
-          .map((accountInfo) => {
-            const info = accountInfo.account.data.parsed.info;
-            return {
-              mint: info.mint,
-              amount: info.tokenAmount.uiAmount,
-              decimals: info.tokenAmount.decimals,
-            };
-          })
-          .filter((token) => token.amount > 0);
+        // Fetch all token accounts owned by the user (legacy and 2022)
+        const [tokenAccountsLegacy, tokenAccounts2022] = await Promise.all([
+          connection.getParsedTokenAccountsByOwner(publicKey, {
+            programId: TOKEN_PROGRAM_ID,
+          }),
+          connection.getParsedTokenAccountsByOwner(publicKey, {
+            programId: TOKEN_2022_PROGRAM_ID,
+          }),
+        ]);
+
+        const parseTokens = (accounts: typeof tokenAccountsLegacy) =>
+          accounts.value
+            .map((accountInfo) => {
+              const info = accountInfo.account.data.parsed.info;
+              return {
+                mint: info.mint,
+                amount: info.tokenAmount.uiAmount,
+                decimals: info.tokenAmount.decimals,
+              };
+            })
+            .filter((token) => token.amount > 0);
+
+        const userTokens: TokenEntity[] = [
+          ...parseTokens(tokenAccountsLegacy),
+          ...parseTokens(tokenAccounts2022),
+        ];
 
         setTokens(userTokens);
       } catch (e) {
